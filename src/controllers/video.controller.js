@@ -1,10 +1,11 @@
-import mongoose from "mongoose"
+import mongoose, { isValidObjectId } from "mongoose"
 import {Video} from "../models/video.models.js"
 import {User} from "../models/user.models.js"
 import { asyncHandler } from "../utils/asynchandler.js"
 import { ApiError} from "../utils/ApiError.js"
 import {ApiResponse} from "../utils/ApiResponse.js"
 import { deleteFromCloudinary, uploadOnCloudinary } from "../utils/cloudinary.js"
+import { title } from "process"
 
 
 const publishAVideo = asyncHandler( async (req, res) => {
@@ -12,7 +13,7 @@ const publishAVideo = asyncHandler( async (req, res) => {
     const { title, description } = req.body;
     console.log(title);
     
-
+    
    // check , if not empty
    if (!title) {
      throw new ApiError(400, "Title is required");
@@ -64,6 +65,7 @@ const publishAVideo = asyncHandler( async (req, res) => {
     })
 
     const createdVideo = await Video.findById(videoDocument._id);
+    
     console.log(createdVideo);
     
     if (!createdVideo) {
@@ -89,7 +91,137 @@ const publishAVideo = asyncHandler( async (req, res) => {
 
 })
 
+const getAllVideos = asyncHandler( async (req, res) => {
+  // get data from url query( /?key=value)
+  let { page = 1, limit = 10, query, sortBy, sortType, userId } = req.query;
+  //console.log(query);
+
+  // aggregate videos based on the expressions given in query which match with the any expression of title or description of video, then sort them
+  // Here during aggregation pipeline we are not using await, because during doing pagination using mongoose-aggregate-paginate it
+  // requires aggregation pipeline. If we use await during aggregation it will return an Array instead of aggregation pipeline
+  let aggregateVideos;
+  if (query) {
+    aggregateVideos = Video.aggregate([
+      {
+        $match: {
+          $or: [
+            { title: { $regex: query, $options: "i" } },
+            { description: { $regex: query, $options: "i" } },
+          ],
+        },
+      },
+      {
+        $sort: {
+          [sortBy]: sortType === "descending" ? -1 : 1,
+        },
+      },
+    ]);
+  }
+
+  // Anything that comes in url is in the form of string. But the page and limit should be number. 
+  // So parse them using "parseInt(valueTobeParsed, radix)"  radix means base of number. Here "10" means decimal
+  const pageNumber = parseInt(page, 10);
+  const limitNumber = parseInt(limit, 10);
+  //console.log("page", typeof(pageNumber));
+  //console.log("limit", typeof(limitNumber));
+
+  const options = {
+    page: pageNumber,
+    limit: limitNumber,
+  };
+
+  //Pagination 
+  const video = await Video.aggregatePaginate(aggregateVideos, options);
+  console.log("videos: ", video);
+
+// check if there is any video or not
+  if (video.totalDocs === 0) {
+    throw new ApiError(404, "No videos found");
+  }
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, video.docs, "Video fetched successfully"));
+})
+
+const getVideoById = asyncHandler( async (req, res) => {
+  // get the video id from url
+  const { videoId } = req.params
+  console.log(videoId);
+  
+// check the id is valid or not
+  if (!isValidObjectId(videoId)) {
+    throw new ApiError(400, "No videos found");
+  }
+
+  const video = await Video.aggregate([
+    {
+      $match: {
+        _id: new mongoose.Types.ObjectId(videoId),
+      },
+    },
+    {
+      $lookup: {
+        from: "users",
+        localField: "owner",
+        foreignField: "_id",
+        as: "owner",
+        pipeline: [
+          {
+            $project: {
+              username: 1,
+              avatar: 1,
+            },
+          },
+        ],
+      },
+    },
+    {
+      $addFields: {
+        owner: {
+          $first: "$owner",
+        },
+      },
+    },
+  ]);
+  console.log(video);
+  //check there is any videdo or not
+  if (!video) {
+    throw new ApiError(400, "No videos found based on your search")
+  }
+
+
+// add the video id into the watchHistory of user
+  await User.findByIdAndUpdate(
+    req.user?._id,
+    {
+      $addToSet: {
+        watchHistory: videoId
+      },
+    },
+    { new: true }
+  );
+
+  // Increase the view count of video
+  await Video.findByIdAndUpdate(
+    videoId,
+    {
+      $inc: {
+        views: 1
+      },
+    },
+  {new: true}
+  );
+
+
+  return res.status(200).json(new ApiResponse(200, video[0], "Video fetched succesfully"));
+})
 
 
 
-export { publishAVideo };
+
+
+
+
+
+export { publishAVideo, getAllVideos, getVideoById };
