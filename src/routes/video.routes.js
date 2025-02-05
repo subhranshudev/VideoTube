@@ -3,6 +3,9 @@ import {
   publishAVideo,
   getAllVideos,
   getVideoById,
+  updateVideo,
+  deleteVideo,
+  togglePublishStatus,
 } from "../controllers/video.controller.js";
 import { upload } from "../middlewares/multer.middlewares.js";
 import { verifyJWT } from "../middlewares/auth.middlewares.js";
@@ -27,7 +30,13 @@ router
     publishAVideo
   );
 
-  router.route("/:videoId").get(getVideoById);
+  router
+    .route("/:videoId")
+    .get(getVideoById)
+    .patch(upload.single("thumbnail"), updateVideo)
+    .delete(deleteVideo);
+
+  router.route("/toggle/publish/:videoId").patch(togglePublishStatus);
   
 
 export default router
